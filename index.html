@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Python Code Visualizer &amp; Stepper</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <p class="eyebrow">Interactive Execution &amp; Memory Stepper</p>
+          <h1>Python Code Visualizer</h1>
+        </div>
+        <button id="resetButton" type="button" title="Reset code in the active tab">Reset Tab</button>
+      </header>
+
+      <section class="workspace">
+        <div class="code-panel">
+          <div class="panel-title">
+            <span class="dot red"></span>
+            <span class="dot yellow"></span>
+            <span class="dot green"></span>
+            <div id="editorTabs" class="editor-tabs" role="tablist" aria-label="Editor tabs">
+              <!-- Dynamically populated tab buttons: Tab 1, Tab 2, ... -->
+            </div>
+            <button id="addTabButton" class="add-tab-button" type="button" title="Open new tab (file)" aria-label="Open new tab">+</button>
+          </div>
+
+          <section id="notesEditor" class="editor-view active" role="tabpanel" aria-label="Python code editor">
+            <label class="sr-only" for="notesText">Python code editor</label>
+            <div class="scratch-editor">
+              <pre id="syntaxHighlight" aria-hidden="true"><code></code></pre>
+              <textarea
+                id="notesText"
+                aria-label="Python code editor"
+                spellcheck="false"
+                autocapitalize="off"
+                autocomplete="off"
+                placeholder="# Type Python here..."
+              ></textarea>
+              <ol id="traceCode" class="trace-code" hidden aria-label="Traced source code"></ol>
+            </div>
+          </section>
+        </div>
+
+        <aside class="right-panel">
+          <section id="conceptPanel" class="concept-panel">
+            <div class="concept-run-row">
+              <button id="runScratchButton" class="primary-button" type="button" title="Run code directly to completion">
+                ▶ Run
+              </button>
+              <button id="visualizeScratchButton" class="primary-button" type="button" title="Step through code execution with memory visualizer">
+                Visualize
+              </button>
+              <button id="exitTutorButton" class="small-button" type="button" hidden title="Return to code editor">
+                Edit code
+              </button>
+            </div>
+
+            <div id="tutorPanel" class="tutor-panel" hidden>
+              <p class="panel-kicker">Execution Stepper</p>
+              <div class="tutor-step-header">
+                <span id="tutorStepCount">Step 1</span>
+                <span id="tutorLineLabel" class="tutor-line-label"></span>
+              </div>
+              <p id="tutorStatus" class="tutor-status" aria-live="polite"></p>
+
+              <div class="tutor-navigation">
+                <button id="tutorPrevButton" type="button">← Previous</button>
+                <input id="tutorStepSlider" type="range" min="0" max="0" value="0" aria-label="Execution step" />
+                <button id="tutorNextButton" class="primary-button" type="button">Next line →</button>
+              </div>
+              <div class="tutor-actions">
+                <button id="tutorNextIterationButton" type="button" title="Jump to next iteration of current loop">Next loop iteration ⟳</button>
+                <button id="tutorFirstButton" type="button">First</button>
+                <button id="tutorLastButton" type="button">Last</button>
+              </div>
+
+              <div class="tutor-memory-layout">
+                <section class="tutor-frames">
+                  <h2>Frames</h2>
+                  <div id="tutorFrames" class="tutor-frames-body"></div>
+                </section>
+                <section class="tutor-heap">
+                  <h2>Objects</h2>
+                  <div id="tutorHeap" class="tutor-heap-body"></div>
+                </section>
+              </div>
+            </div>
+
+            <div id="idlePanel" class="idle-panel">
+              <p class="panel-kicker">Memory Visualizer</p>
+              <h2>Step through code &amp; inspect memory</h2>
+              <p class="concept-intro">
+                Write or paste any Python code in the tab on the left. Click <strong>Visualize</strong> to step through execution line by line, inspect variable state in call frames, and watch data structures live in heap memory.
+              </p>
+              <div class="quick-tips">
+                <div class="tip-card">
+                  <span class="tip-icon">⚡</span>
+                  <div>
+                    <strong>Line &amp; Loop Stepping</strong>
+                    <p>Step statement by statement or jump directly to the next loop iteration.</p>
+                  </div>
+                </div>
+                <div class="tip-card">
+                  <span class="tip-icon">🧠</span>
+                  <div>
+                    <strong>Visual Memory Model</strong>
+                    <p>Inspect local variables in stack frames and see lists, dicts, and class instances on the heap.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="concept-console">
+              <div class="console-header">
+                <h2 id="consoleHeading">Console</h2>
+                <button id="clearScratchConsole" class="small-button" type="button">Clear</button>
+              </div>
+              <pre id="scratchConsole">Run or Visualize to see output...</pre>
+            </div>
+          </section>
+        </aside>
+      </section>
+    </main>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js"></script>
+    <script src="script.js"></script>
+  </body>
+</html>

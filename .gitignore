@@ -1,0 +1,16 @@
+# Operating System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor and IDE directories
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python bytecode & cache (if any testing scripts are run locally)
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
