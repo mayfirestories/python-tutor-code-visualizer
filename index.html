@@ -78,7 +78,18 @@
                 <button id="tutorLastButton" type="button">Last</button>
               </div>
 
-              <div class="tutor-memory-layout">
+              <div class="tutor-view-toggle" role="tablist" aria-label="Visualizer view">
+                <button id="tutorMemoryViewButton" class="view-toggle-button active" type="button" role="tab" aria-selected="true">Variables</button>
+                <button id="tutorTreeViewButton" class="view-toggle-button" type="button" role="tab" aria-selected="false">Tree</button>
+              </div>
+
+              <section id="tutorTreeView" class="tutor-tree-view" hidden aria-label="Tree visualization">
+                <div id="tutorTreeLegend" class="tree-legend"></div>
+                <div id="tutorTreeCanvas" class="tree-canvas"></div>
+                <div id="tutorTreeQueues" class="tree-queues" hidden></div>
+              </section>
+
+              <div id="tutorMemoryLayout" class="tutor-memory-layout">
                 <section class="tutor-frames">
                   <h2>Frames</h2>
                   <div id="tutorFrames" class="tutor-frames-body"></div>

@@ -23,6 +23,13 @@ const tutorFirst = document.querySelector("#tutorFirstButton");
 const tutorLast = document.querySelector("#tutorLastButton");
 const tutorFrames = document.querySelector("#tutorFrames");
 const tutorHeap = document.querySelector("#tutorHeap");
+const tutorMemoryLayout = document.querySelector("#tutorMemoryLayout");
+const tutorTreeView = document.querySelector("#tutorTreeView");
+const tutorTreeLegend = document.querySelector("#tutorTreeLegend");
+const tutorTreeCanvas = document.querySelector("#tutorTreeCanvas");
+const tutorTreeQueues = document.querySelector("#tutorTreeQueues");
+const tutorMemoryViewButton = document.querySelector("#tutorMemoryViewButton");
+const tutorTreeViewButton = document.querySelector("#tutorTreeViewButton");
 
 const consoleHeading = document.querySelector("#consoleHeading");
 const scratchConsole = document.querySelector("#scratchConsole");
@@ -40,19 +47,21 @@ let tabCounter = 0;
 
 const TRACER_BOOTSTRAP = `
 import ast
+import collections
 import io
 import json
 import sys
 import traceback
 
 MAX_STEPS = 500
+MAX_ENCODE_DEPTH = 60
 SKIP_NAMES = {
     "__name__", "__doc__", "__package__", "__loader__", "__spec__",
     "__annotations__", "__builtins__", "tutor_trace", "USER_SOURCE"
 }
 
 def _tutor_encode(value, heap, depth=0):
-    if depth > 4:
+    if depth > MAX_ENCODE_DEPTH:
         return {"kind": "primitive", "type": type(value).__name__, "value": "..."}
     if value is None:
         return {"kind": "primitive", "type": "NoneType", "value": "None"}
@@ -68,7 +77,7 @@ def _tutor_encode(value, heap, depth=0):
         return {"kind": "primitive", "type": "bytes", "value": repr(value)}
     if callable(value) or isinstance(value, type) or type(value).__name__ == "module":
         return None
-    if isinstance(value, (list, tuple, set, frozenset, dict)) or hasattr(value, "__dict__"):
+    if isinstance(value, (list, tuple, set, frozenset, dict, collections.deque)) or hasattr(value, "__dict__"):
         oid = str(id(value))
         if oid in heap:
             return {"kind": "ref", "id": oid}
@@ -79,7 +88,7 @@ def _tutor_encode(value, heap, depth=0):
                 for k, v in value.items()
             ]
             return {"kind": "ref", "id": oid}
-        if isinstance(value, (list, tuple, set, frozenset)):
+        if isinstance(value, (list, tuple, set, frozenset, collections.deque)):
             heap[oid] = {"id": oid, "type": type(value).__name__, "elements": []}
             heap[oid]["elements"] = [_tutor_encode(item, heap, depth + 1) for item in value]
             return {"kind": "ref", "id": oid}
@@ -414,6 +423,437 @@ function renderTutorHeap(heap, labels) {
   }).join("");
 }
 
+// ---------------------------------------------------------------------------
+// Tree View
+// ---------------------------------------------------------------------------
+
+const TREE_BINARY_SLOTS = ["left", "right"];
+const TREE_HINT_ATTRS = ["left", "right", "children", "next"];
+const TREE_VALUE_KEYS = ["val", "value", "data", "key", "item", "name"];
+const TREE_X_SPACING = 58;
+const TREE_Y_SPACING = 78;
+const TREE_NODE_RADIUS = 20;
+const TREE_PADDING = 36;
+
+function isInstance(object) {
+  return Boolean(object?.attrs);
+}
+
+function findTreeTypes(heap) {
+  const types = new Set();
+  Object.values(heap || {}).forEach((object) => {
+    if (!isInstance(object)) return;
+    Object.entries(object.attrs).forEach(([name, value]) => {
+      if (TREE_HINT_ATTRS.includes(name)) types.add(object.type);
+      if (value?.kind !== "ref") return;
+      const target = heap[value.id];
+      if (isInstance(target) && target.type === object.type) types.add(object.type);
+      (target?.elements || []).forEach((item) => {
+        const child = item?.kind === "ref" ? heap[item.id] : null;
+        if (isInstance(child) && child.type === object.type) types.add(object.type);
+      });
+    });
+  });
+  return types;
+}
+
+function isTreeNode(id, heap, treeTypes) {
+  const object = heap?.[id];
+  return isInstance(object) && treeTypes.has(object.type);
+}
+
+function treeChildSlots(object, heap, treeTypes) {
+  const slots = [];
+  Object.entries(object.attrs).forEach(([name, value]) => {
+    const isRef = value?.kind === "ref";
+    if (TREE_BINARY_SLOTS.includes(name)) {
+      slots.push({ name, id: isRef && isTreeNode(value.id, heap, treeTypes) ? value.id : null });
+      return;
+    }
+    if (!isRef) return;
+    if (isTreeNode(value.id, heap, treeTypes)) {
+      slots.push({ name, id: value.id });
+      return;
+    }
+    (heap[value.id]?.elements || []).forEach((item, index) => {
+      if (item?.kind === "ref" && isTreeNode(item.id, heap, treeTypes)) {
+        slots.push({ name: `${name}[${index}]`, id: item.id });
+      }
+    });
+  });
+  return slots;
+}
+
+function treeNodeValue(object) {
+  const attrs = Object.entries(object.attrs);
+  const preferred = TREE_VALUE_KEYS.map((key) => object.attrs[key]).find((value) => value?.kind === "primitive");
+  const fallback = attrs.map(([, value]) => value).find((value) => value?.kind === "primitive");
+  const encoded = preferred || fallback;
+  if (!encoded) return object.type;
+  let text = encoded.value;
+  if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) text = text.slice(1, -1);
+  return text.length > 6 ? `${text.slice(0, 5)}…` : text;
+}
+
+function collectTreePointers(frames, heap, treeTypes, labels) {
+  const pointers = new Map();
+  const add = (id, name, kind) => {
+    if (!pointers.has(id)) pointers.set(id, []);
+    const list = pointers.get(id);
+    if (!list.some((pointer) => pointer.name === name)) list.push({ name, kind });
+  };
+
+  (frames || []).forEach((frame, index) => {
+    const kind = index === frames.length - 1 ? "active" : "outer";
+    Object.entries(frame.locals || {}).forEach(([name, value]) => {
+      if (value?.kind === "ref" && isTreeNode(value.id, heap, treeTypes)) add(value.id, name, kind);
+    });
+  });
+
+  Object.values(heap || {}).forEach((object) => {
+    if (!isInstance(object) || treeTypes.has(object.type)) return;
+    Object.entries(object.attrs).forEach(([name, value]) => {
+      if (value?.kind === "ref" && isTreeNode(value.id, heap, treeTypes)) {
+        add(value.id, `${labelForRef(object.id, heap, labels)}.${name}`, "attr");
+      }
+    });
+  });
+
+  return pointers;
+}
+
+function layoutTreeForest(heap, treeTypes) {
+  const nodeIds = Object.keys(heap || {}).filter((id) => isTreeNode(id, heap, treeTypes));
+  const childIds = new Set();
+  nodeIds.forEach((id) => {
+    treeChildSlots(heap[id], heap, treeTypes).forEach((slot) => slot.id && childIds.add(slot.id));
+  });
+
+  const roots = nodeIds.filter((id) => !childIds.has(id));
+  const positions = new Map();
+  const edges = [];
+  const visited = new Set();
+  let nextX = 0;
+  let maxDepth = 0;
+
+  function place(id, depth) {
+    visited.add(id);
+    maxDepth = Math.max(maxDepth, depth);
+    const slots = treeChildSlots(heap[id], heap, treeTypes);
+    const hasRealChild = slots.some((slot) => slot.id && !visited.has(slot.id));
+
+    if (!hasRealChild) {
+      slots.forEach((slot) => slot.id && edges.push({ from: id, to: slot.id, shared: true }));
+      const x = nextX++;
+      positions.set(id, { x, depth });
+      return x;
+    }
+
+    const xs = [];
+    slots.forEach((slot) => {
+      if (slot.id === null) {
+        xs.push(nextX++);
+      } else if (visited.has(slot.id)) {
+        edges.push({ from: id, to: slot.id, shared: true });
+      } else {
+        edges.push({ from: id, to: slot.id, shared: false });
+        xs.push(place(slot.id, depth + 1));
+      }
+    });
+
+    const x = (xs[0] + xs[xs.length - 1]) / 2;
+    positions.set(id, { x, depth });
+    return x;
+  }
+
+  roots.forEach((id) => {
+    if (!visited.has(id)) {
+      place(id, 0);
+      nextX += 0.6;
+    }
+  });
+  nodeIds.forEach((id) => {
+    if (!visited.has(id)) {
+      place(id, 0);
+      nextX += 0.6;
+    }
+  });
+
+  return { positions, edges, width: Math.max(nextX - 0.6, 1), maxDepth, count: nodeIds.length };
+}
+
+const QUEUE_NAME_PATTERN = /^(q|queue|que|dq|deque|frontier|to_visit|bfs|stack|stk|dfs)$/i;
+
+function queueItemNodeId(encoded, heap, treeTypes) {
+  if (encoded?.kind !== "ref") return null;
+  if (isTreeNode(encoded.id, heap, treeTypes)) return encoded.id;
+  const wrapper = heap[encoded.id];
+  if (wrapper?.type !== "tuple" && wrapper?.type !== "list") return null;
+  const inner = (wrapper.elements || []).find((item) => item?.kind === "ref" && isTreeNode(item.id, heap, treeTypes));
+  return inner ? inner.id : null;
+}
+
+function queueItemLabel(encoded, heap, treeTypes, labels) {
+  if (!encoded) return "?";
+  if (encoded.kind !== "ref") return encoded.value;
+  if (isTreeNode(encoded.id, heap, treeTypes)) return treeNodeValue(heap[encoded.id]);
+  const wrapper = heap[encoded.id];
+  if (wrapper?.elements && queueItemNodeId(encoded, heap, treeTypes)) {
+    return wrapper.elements.map((item) => queueItemLabel(item, heap, treeTypes, labels)).join(", ");
+  }
+  return labelForRef(encoded.id, heap, labels);
+}
+
+function findTreeQueues(frames, heap, treeTypes) {
+  const queues = [];
+  const seen = new Set();
+  const nodeOwned = new Set();
+  const nodeAttrNames = new Set(TREE_HINT_ATTRS);
+  Object.values(heap || {}).forEach((object) => {
+    if (!isInstance(object) || !treeTypes.has(object.type)) return;
+    Object.entries(object.attrs).forEach(([attrName, value]) => {
+      nodeAttrNames.add(attrName);
+      if (value?.kind === "ref") nodeOwned.add(value.id);
+    });
+  });
+
+  [...(frames || [])].reverse().forEach((frame, reverseIndex) => {
+    Object.entries(frame.locals || {}).forEach(([name, value]) => {
+      if (value?.kind !== "ref" || seen.has(value.id)) return;
+      const container = heap[value.id];
+      if (!container?.elements || container.type === "set" || container.type === "frozenset") return;
+      const namedLikeQueue = QUEUE_NAME_PATTERN.test(name);
+      if ((nodeOwned.has(value.id) || nodeAttrNames.has(name)) && !namedLikeQueue) return;
+      const holdsNodes = container.elements.some((item) => queueItemNodeId(item, heap, treeTypes));
+      if (!holdsNodes && container.type !== "deque" && !namedLikeQueue) return;
+      seen.add(value.id);
+      queues.push({ name, frameName: frame.name, active: reverseIndex === 0, container });
+    });
+  });
+  return queues;
+}
+
+const TRAVERSAL_MODES = {
+  queue: {
+    nextIndex: (last) => 0,
+    nextTag: "front",
+    endTag: "back",
+    leftArrow: "← out",
+    rightArrow: "← in",
+    legend: "In queue"
+  },
+  stack: {
+    nextIndex: (last) => last,
+    nextTag: "top",
+    endTag: "bottom",
+    leftArrow: "bottom",
+    rightArrow: "⇄ push / pop",
+    legend: "On stack"
+  }
+};
+
+function traversalModeFor(tab) {
+  return TRAVERSAL_MODES[tab?.traversalMode] ? tab.traversalMode : "queue";
+}
+
+function renderTraversalToolbar(mode) {
+  return `
+    <div class="traversal-toolbar">
+      <span class="traversal-label">Show as</span>
+      <div class="tutor-view-toggle traversal-toggle" role="tablist" aria-label="Traversal structure">
+        ${["queue", "stack"].map((option) => `
+          <button class="view-toggle-button${option === mode ? " active" : ""}" type="button" role="tab" aria-selected="${option === mode}" data-traversal-mode="${option}">
+            ${option === "queue" ? "Queue" : "Stack"}
+          </button>`).join("")}
+      </div>
+    </div>`;
+}
+
+function renderTreeQueues(queues, heap, treeTypes, labels, activeNodeIds, mode) {
+  const config = TRAVERSAL_MODES[mode];
+  tutorTreeQueues.hidden = false;
+
+  const rows = queues.map((queue) => {
+    const items = queue.container.elements;
+    const last = items.length - 1;
+    const nextIndex = config.nextIndex(last);
+    const endIndex = mode === "queue" ? last : 0;
+    const cells = items.length
+      ? items.map((item, index) => {
+          const nodeId = queueItemNodeId(item, heap, treeTypes);
+          const classes = ["queue-cell"];
+          if (index === nextIndex) classes.push("next");
+          if (index === endIndex) classes.push("end");
+          if (nodeId && activeNodeIds.has(nodeId)) classes.push("active");
+          const tag = index === nextIndex && index === endIndex
+            ? `${config.nextTag} · ${config.endTag}`
+            : index === nextIndex
+              ? config.nextTag
+              : index === endIndex
+                ? config.endTag
+                : "";
+          return `
+            <div class="${classes.join(" ")}">
+              <span class="queue-tag">${tag}</span>
+              <span class="queue-value">${escapeHtml(queueItemLabel(item, heap, treeTypes, labels))}</span>
+              <span class="queue-index">${index}</span>
+            </div>`;
+        }).join("")
+      : `<div class="queue-empty">empty</div>`;
+
+    return `
+      <div class="queue-row${queue.active ? "" : " outer"}">
+        <div class="queue-header">
+          <span class="queue-name">${escapeHtml(queue.name)}</span>
+          <span class="queue-meta">${escapeHtml(queue.container.type)} · ${items.length} item${items.length === 1 ? "" : "s"}${queue.active ? "" : ` · ${escapeHtml(queue.frameName)}`}</span>
+        </div>
+        <div class="queue-track">
+          <span class="queue-direction">${config.leftArrow}</span>
+          <div class="queue-cells">${cells}</div>
+          <span class="queue-direction">${config.rightArrow}</span>
+        </div>
+      </div>`;
+  }).join("");
+
+  tutorTreeQueues.innerHTML = renderTraversalToolbar(mode) + (rows || `<p class="tutor-empty">No queue or stack variables at this step.</p>`);
+}
+
+function renderTreeLegend(frames, heap, treeTypes, mode) {
+  const activeFrame = frames?.[frames.length - 1];
+  const chips = Object.entries(activeFrame?.locals || {}).flatMap(([name, value]) => {
+    if (value?.kind === "ref" && isTreeNode(value.id, heap, treeTypes)) {
+      return [`<span class="tree-chip active"><strong>${escapeHtml(name)}</strong> → ${escapeHtml(treeNodeValue(heap[value.id]))}</span>`];
+    }
+    if (value?.kind === "primitive" && value.type === "NoneType") {
+      return [`<span class="tree-chip none"><strong>${escapeHtml(name)}</strong> → None</span>`];
+    }
+    return [];
+  });
+
+  const frameName = activeFrame ? escapeHtml(activeFrame.name) : "—";
+  tutorTreeLegend.innerHTML = `
+    <div class="tree-legend-row">
+      <span class="tree-key"><span class="tree-swatch active"></span>Variable in ${frameName}</span>
+      <span class="tree-key"><span class="tree-swatch outer"></span>Variable in an outer frame</span>
+      <span class="tree-key"><span class="tree-swatch attr"></span>Object attribute</span>
+      <span class="tree-key"><span class="tree-swatch queued"></span>${TRAVERSAL_MODES[mode].legend}</span>
+    </div>
+    ${chips.length ? `<div class="tree-legend-row">${chips.join("")}</div>` : ""}
+  `;
+}
+
+function renderTutorTree(frames, heap, labels) {
+  const treeTypes = findTreeTypes(heap);
+  const mode = traversalModeFor(getActiveTab());
+  renderTreeLegend(frames, heap, treeTypes, mode);
+
+  const layout = layoutTreeForest(heap, treeTypes);
+  if (!layout.count) {
+    renderTreeQueues([], heap, treeTypes, labels, new Set(), mode);
+    tutorTreeCanvas.innerHTML = `<p class="tutor-empty">No tree nodes in memory at this step. Tree nodes are class instances with <code>left</code>/<code>right</code>, <code>children</code>, or attributes that point to other instances of the same class.</p>`;
+    return;
+  }
+
+  const pointers = collectTreePointers(frames, heap, treeTypes, labels);
+  const activeNodeIds = new Set(
+    [...pointers.entries()].filter(([, list]) => list.some((p) => p.kind === "active")).map(([id]) => id)
+  );
+  const queues = findTreeQueues(frames, heap, treeTypes);
+  renderTreeQueues(queues, heap, treeTypes, labels, activeNodeIds, mode);
+
+  const queuedIds = new Set();
+  const nextIds = new Set();
+  queues.forEach((queue) => {
+    const items = queue.container.elements;
+    const nextIndex = TRAVERSAL_MODES[mode].nextIndex(items.length - 1);
+    items.forEach((item, index) => {
+      const nodeId = queueItemNodeId(item, heap, treeTypes);
+      if (!nodeId) return;
+      queuedIds.add(nodeId);
+      if (index === nextIndex) nextIds.add(nodeId);
+    });
+  });
+
+  const toPixel = ({ x, depth }) => ({
+    cx: TREE_PADDING + x * TREE_X_SPACING,
+    cy: TREE_PADDING + depth * TREE_Y_SPACING
+  });
+  const width = TREE_PADDING * 2 + layout.width * TREE_X_SPACING;
+  const height = TREE_PADDING * 2 + layout.maxDepth * TREE_Y_SPACING + 28;
+
+  const edgeSvg = layout.edges.map((edge) => {
+    const from = toPixel(layout.positions.get(edge.from));
+    const to = toPixel(layout.positions.get(edge.to));
+    return `<line class="tree-edge${edge.shared ? " shared" : ""}" x1="${from.cx}" y1="${from.cy}" x2="${to.cx}" y2="${to.cy}" />`;
+  }).join("");
+
+  const nodeSvg = [...layout.positions.entries()].map(([id, position]) => {
+    const { cx, cy } = toPixel(position);
+    const nodePointers = pointers.get(id) || [];
+    const state = nodePointers.some((p) => p.kind === "active")
+      ? "active"
+      : nodePointers.some((p) => p.kind === "outer")
+        ? "outer"
+        : nodePointers.length
+          ? "attr"
+          : "";
+
+    let pointerSvg = "";
+    if (nodePointers.length) {
+      const text = nodePointers.map((p) => p.name).join(", ");
+      const shown = text.length > 22 ? `${text.slice(0, 21)}…` : text;
+      const pillWidth = shown.length * 6.6 + 12;
+      const pillY = cy + TREE_NODE_RADIUS + 6;
+      pointerSvg = `
+        <g class="tree-pointer ${state}">
+          <title>${escapeHtml(text)}</title>
+          <rect x="${cx - pillWidth / 2}" y="${pillY}" width="${pillWidth}" height="17" rx="8.5" />
+          <text x="${cx}" y="${pillY + 12.5}">${escapeHtml(shown)}</text>
+        </g>`;
+    }
+
+    const queueRing = queuedIds.has(id)
+      ? `<circle class="tree-queue-ring${nextIds.has(id) ? " next" : ""}" cx="${cx}" cy="${cy}" r="${TREE_NODE_RADIUS + 5}" />`
+      : "";
+
+    return `
+      ${queueRing}
+      <g class="tree-node ${state}">
+        <title>${escapeHtml(labelForRef(id, heap, labels))} (${escapeHtml(heap[id].type)})</title>
+        <circle cx="${cx}" cy="${cy}" r="${TREE_NODE_RADIUS}" />
+        <text x="${cx}" y="${cy + 4.5}">${escapeHtml(treeNodeValue(heap[id]))}</text>
+      </g>
+      ${pointerSvg}`;
+  }).join("");
+
+  tutorTreeCanvas.innerHTML = `
+    <svg class="tree-svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Tree diagram">
+      ${edgeSvg}
+      ${nodeSvg}
+    </svg>`;
+
+  const focus = tutorTreeCanvas.querySelector(".tree-node.active circle");
+  if (focus) focus.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+function applyTutorView(tab) {
+  const showTree = tab?.tutorView === "tree";
+  tutorTreeView.hidden = !showTree;
+  tutorMemoryLayout.hidden = showTree;
+  tutorMemoryViewButton.classList.toggle("active", !showTree);
+  tutorTreeViewButton.classList.toggle("active", showTree);
+  tutorMemoryViewButton.setAttribute("aria-selected", String(!showTree));
+  tutorTreeViewButton.setAttribute("aria-selected", String(showTree));
+}
+
+function setTutorView(view) {
+  const tab = getActiveTab();
+  if (!tab) return;
+  tab.tutorView = view;
+  applyTutorView(tab);
+  if (tab.tutorActive) showTutorStep(tab.tutorStepIndex);
+}
+
 function renderTraceCode(code, activeLine) {
   const lines = (code || "").split("\n");
   traceCode.innerHTML = lines.map((line, index) => {
@@ -448,7 +888,9 @@ function createTab(initialCode = null) {
     tutorActive: false,
     tutorSteps: [],
     tutorStepIndex: 0,
-    tutorStatus: ""
+    tutorStatus: "",
+    tutorView: "memory",
+    traversalMode: "queue"
   };
   tabs.push(newTab);
   switchTab(newTab.id);
@@ -527,6 +969,7 @@ function syncTabToUI(tab) {
     exitTutorButton.hidden = false;
     runButton.hidden = true;
     visualizeButton.hidden = true;
+    applyTutorView(tab);
     showTutorStep(tab.tutorStepIndex);
   } else {
     scratchEditor.classList.remove("tracing");
@@ -617,8 +1060,12 @@ function showTutorStep(index) {
 
   renderTraceCode(tab.code, isFinished ? null : step.line);
   const { labels, names } = buildHeapLabels(step.frames, step.heap);
-  renderTutorFrames(step.frames, step.heap, labels, names);
-  renderTutorHeap(step.heap, labels);
+  if (tab.tutorView === "tree") {
+    renderTutorTree(step.frames, step.heap, labels);
+  } else {
+    renderTutorFrames(step.frames, step.heap, labels, names);
+    renderTutorHeap(step.heap, labels);
+  }
 
   const stepOutput = step.stdout?.trim()
     ? step.stdout.replace(/\n$/, "")
@@ -803,6 +1250,17 @@ tutorNextIter.addEventListener("click", () => {
 
 tutorSlider.addEventListener("input", () => {
   showTutorStep(Number(tutorSlider.value));
+});
+
+tutorMemoryViewButton.addEventListener("click", () => setTutorView("memory"));
+tutorTreeViewButton.addEventListener("click", () => setTutorView("tree"));
+
+tutorTreeQueues.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-traversal-mode]");
+  const tab = getActiveTab();
+  if (!button || !tab) return;
+  tab.traversalMode = button.dataset.traversalMode;
+  if (tab.tutorActive) showTutorStep(tab.tutorStepIndex);
 });
 
 clearScratchConsole.addEventListener("click", () => {
