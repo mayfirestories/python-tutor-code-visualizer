@@ -60,6 +60,12 @@ const tutorDsuByRank = document.querySelector("#tutorDsuByRank");
 const tutorDsuBySize = document.querySelector("#tutorDsuBySize");
 const tutorDsuDetail = document.querySelector("#tutorDsuDetail");
 const tutorDsuViewButton = document.querySelector("#tutorDsuViewButton");
+const tutorDpView = document.querySelector("#tutorDpView");
+const tutorDpLegend = document.querySelector("#tutorDpLegend");
+const tutorDpTables = document.querySelector("#tutorDpTables");
+const tutorDpChoice = document.querySelector("#tutorDpChoice");
+const tutorDpRebuild = document.querySelector("#tutorDpRebuild");
+const tutorDpViewButton = document.querySelector("#tutorDpViewButton");
 const tutorVarFocus = document.querySelector("#tutorVarFocus");
 const tutorVarFocusKicker = document.querySelector("#tutorVarFocusKicker");
 const tutorVarFocusTitle = document.querySelector("#tutorVarFocusTitle");
@@ -3081,7 +3087,205 @@ function renderTutorDsu(frames, heap) {
   renderDsuDetail(described);
 }
 
-const TUTOR_VIEWS = ["memory", "tree", "graph", "path", "dsu"];
+// ---------------------------------------------------------------------------
+// Dynamic programming coin table
+// fewest[i] is the answer for making i cents. first_coin[i] is the coin
+// that produced that answer. Later amounts read those cells instead of
+// solving the leftover again.
+// ---------------------------------------------------------------------------
+
+function readScalarInt(encoded) {
+  const token = primitiveToken(encoded);
+  if (!token || token.key.startsWith("s:")) return null;
+  return Number(token.label);
+}
+
+function readDpList(object) {
+  if (!object?.elements || (object.type !== "list" && object.type !== "tuple")) return null;
+  const values = [];
+  for (const element of object.elements) {
+    if (element?.kind === "primitive" && element.type === "NoneType") {
+      values.push(null);
+      continue;
+    }
+    const value = readScalarInt(element);
+    if (value == null) return null;
+    values.push(value);
+  }
+  return values;
+}
+
+function findInnermostList(frames, heap, pattern, allowEmpty = false) {
+  let found = null;
+  (frames || []).forEach((frame) => {
+    Object.entries(frame.locals || {}).forEach(([name, encoded]) => {
+      if (!pattern.test(name) || encoded?.kind !== "ref") return;
+      const values = readDpList(heap?.[encoded.id]);
+      if (!values || (!allowEmpty && !values.length)) return;
+      found = { name, values };
+    });
+  });
+  return found;
+}
+
+function findInnermostInt(frames, names) {
+  const wanted = new Set(names);
+  let found = null;
+  (frames || []).forEach((frame) => {
+    Object.entries(frame.locals || {}).forEach(([name, encoded]) => {
+      if (!wanted.has(name)) return;
+      const value = readScalarInt(encoded);
+      if (value == null) return;
+      found = value;
+    });
+  });
+  return found;
+}
+
+function collectDpState(frames, heap) {
+  const count = findInnermostList(frames, heap, /^(fewest|min_coins|coin_dp)$/i)
+    || findInnermostList(frames, heap, /^dp$/i);
+  if (!count) return null;
+  const choice = findInnermostList(frames, heap, /^(first_coin|coin_choice|choice)$/i);
+  const coins = findInnermostList(frames, heap, /^(coins|denoms|denominations)$/i);
+  const chosen = findInnermostList(frames, heap, /^(chosen|dp_coins|taken)$/i, true);
+  const amountIndex = findInnermostInt(frames, ["a"]);
+  const coin = findInnermostInt(frames, ["coin"]);
+  const left = findInnermostInt(frames, ["left"]);
+  const mode = left != null ? "rebuild" : amountIndex != null ? "fill" : "done";
+  const future = mode === "fill" && coin != null && amountIndex != null && coin <= amountIndex && amountIndex - coin >= 0
+    ? amountIndex - coin
+    : null;
+  return { count, choice, coins, chosen, amountIndex, coin, left, mode, future };
+}
+
+function previousDpValues(name) {
+  const tab = getActiveTab();
+  const step = tab?.tutorSteps?.[tab.tutorStepIndex - 1];
+  if (!step || !name) return null;
+  return findInnermostList(step.frames, step.heap, new RegExp(`^${name}$`))?.values || null;
+}
+
+function dpColumnClass(index, state) {
+  if (state.mode === "rebuild" && index === state.left) return "here";
+  if (state.mode === "fill" && index === state.amountIndex) return "here";
+  if (state.mode === "fill" && index === state.future) return "future";
+  return "";
+}
+
+function renderDpGrid(state) {
+  const count = state.count.values;
+  const choice = state.choice?.values || [];
+  const previousCount = previousDpValues(state.count.name);
+  const previousChoice = state.choice ? previousDpValues(state.choice.name) : null;
+  const indexes = count.map((_, index) => {
+    const mark = dpColumnClass(index, state);
+    return `<div class="dp-index${mark ? ` ${mark}` : ""}">${index}</div>`;
+  }).join("");
+  const countCells = count.map((value, index) => {
+    const mark = dpColumnClass(index, state);
+    const unset = value >= count.length;
+    const changed = previousCount && previousCount[index] !== value;
+    const classes = ["dp-cell", mark, unset ? "unset" : "", changed ? "changed" : ""].filter(Boolean).join(" ");
+    return `<div class="${classes}"><span>${value}</span></div>`;
+  }).join("");
+  const choiceCells = state.choice ? count.map((_, index) => {
+    const value = index < choice.length ? choice[index] : null;
+    const mark = dpColumnClass(index, state);
+    const changed = previousChoice && previousChoice[index] !== value;
+    const classes = ["dp-cell", mark, value == null ? "unset" : "", changed ? "changed" : ""].filter(Boolean).join(" ");
+    return `<div class="${classes}"><span>${value == null ? "—" : value}</span></div>`;
+  }).join("") : "";
+  const choiceRow = state.choice
+    ? `<div class="dp-row-label">${escapeHtml(state.choice.name)}</div>${choiceCells}`
+    : "";
+  return `
+    <div class="dp-grid" style="--n:${count.length}">
+      <div class="dp-corner"></div>
+      ${indexes}
+      <div class="dp-row-label">${escapeHtml(state.count.name)}</div>
+      ${countCells}
+      ${choiceRow}
+    </div>`;
+}
+
+function renderDpChoice(state) {
+  if (state.mode !== "fill" || state.amountIndex == null) {
+    tutorDpChoice.innerHTML = `<div class="dsu-organize-label">This amount</div><p class="tutor-empty">Coin trials show up while an amount is being solved.</p>`;
+    return;
+  }
+  const coins = state.coins?.values || [];
+  const bestCoin = state.choice?.values?.[state.amountIndex];
+  const bestCount = state.count.values[state.amountIndex];
+  const solved = bestCount != null && bestCount < state.count.values.length;
+  const summary = solved
+    ? `${state.amountIndex}¢ best so far: ${bestCount} coin${bestCount === 1 ? "" : "s"}${bestCoin == null ? "" : `, taking ${bestCoin} first`}.`
+    : `${state.amountIndex}¢ has no coin kept yet.`;
+  const trials = coins.map((coin) => {
+    const current = coin === state.coin;
+    const best = bestCoin === coin && solved;
+    if (coin > state.amountIndex) {
+      return `<div class="dp-trial${current ? " current" : ""}"><span>take ${coin}</span><span>too big</span></div>`;
+    }
+    const leftover = state.count.values[state.amountIndex - coin];
+    const total = 1 + leftover;
+    return `<div class="dp-trial${current ? " current" : ""}${best ? " best" : ""}"><span>take ${coin}</span><span>1 + ${escapeHtml(state.count.name)}[${state.amountIndex - coin}] = ${total}</span></div>`;
+  }).join("");
+  tutorDpChoice.innerHTML = `
+    <div class="dsu-organize-label">This amount</div>
+    <p class="dp-summary">${escapeHtml(summary)}</p>
+    ${trials || `<p class="tutor-empty">No list named coins is in this frame.</p>`}`;
+}
+
+function renderDpRebuild(state) {
+  const taken = state.chosen?.values || [];
+  const chips = taken.length
+    ? taken.map((coin) => `<span class="dp-chip">${escapeHtml(String(coin))}</span>`).join("")
+    : `<span class="queue-empty">none yet</span>`;
+  let walk = "After the table is full, start from the amount still owed. Read first_coin there, record that coin, then repeat on what is left.";
+  if (state.mode === "rebuild" && state.choice && state.left != null && state.left >= 0 && state.left < state.choice.values.length) {
+    const take = state.choice.values[state.left];
+    walk = take == null
+      ? `Owe ${state.left}¢. ${state.choice.name}[${state.left}] is not set.`
+      : `Owe ${state.left}¢. ${state.choice.name}[${state.left}] is ${take}, so take ${take} and owe ${state.left - take}¢ next.`;
+  } else if (state.mode === "done" && taken.length) {
+    walk = `Collected ${taken.join(" + ")}.`;
+  }
+  const label = state.chosen ? state.chosen.name : "chosen";
+  tutorDpRebuild.innerHTML = `
+    <div>
+      <div class="dsu-detail-label">${escapeHtml(label)}</div>
+      <div class="dp-chip-row">${chips}</div>
+    </div>
+    <p class="dsu-note">${escapeHtml(walk)}</p>`;
+}
+
+function renderTutorDp(frames, heap) {
+  const state = collectDpState(frames, heap);
+  if (!state) {
+    tutorDpLegend.innerHTML = `<p class="dsu-note">No coin table in memory at this step. The DP tab reads a list named <code>fewest</code> or <code>dp</code>, and a choice list named <code>first_coin</code>.</p>`;
+    tutorDpTables.innerHTML = `<p class="tutor-empty">Step into the function that fills the table. Column i is the smaller problem “make i cents.”</p>`;
+    tutorDpChoice.innerHTML = "";
+    tutorDpRebuild.innerHTML = "";
+    return;
+  }
+
+  const choiceName = state.choice ? state.choice.name : "first_coin";
+  tutorDpLegend.innerHTML = `
+    <div class="tree-legend-row">
+      <span class="tree-chip active"><strong>${escapeHtml(state.count.name)}</strong></span>
+      ${state.choice ? `<span class="tree-chip"><strong>${escapeHtml(state.choice.name)}</strong></span>` : `<span class="tree-chip none">no ${escapeHtml(choiceName)}</span>`}
+      <span class="tree-key"><span class="tree-swatch active"></span>${state.mode === "rebuild" ? "Amount still owed" : "Amount being solved"}</span>
+      <span class="tree-key"><span class="tree-swatch parent"></span>Leftover already solved</span>
+      <span class="tree-key"><span class="tree-swatch changed-link"></span>Just written</span>
+    </div>
+    <p class="dsu-note">Each column is its own problem, “make this many cents.” ${escapeHtml(state.count.name)} stores how many coins that takes. ${escapeHtml(choiceName)} stores the coin taken first. A larger amount reads the leftover’s column instead of solving it again, then the coin list is the chain of those first coins.</p>`;
+  tutorDpTables.innerHTML = renderDpGrid(state);
+  renderDpChoice(state);
+  renderDpRebuild(state);
+}
+
+const TUTOR_VIEWS = ["memory", "tree", "graph", "path", "dsu", "dp"];
 
 function applyTutorView(tab) {
   const view = TUTOR_VIEWS.includes(tab?.tutorView) ? tab.tutorView : "memory";
@@ -3090,7 +3294,8 @@ function applyTutorView(tab) {
   tutorGraphView.hidden = view !== "graph";
   tutorPathView.hidden = view !== "path";
   tutorDsuView.hidden = view !== "dsu";
-  [[tutorMemoryViewButton, "memory"], [tutorTreeViewButton, "tree"], [tutorGraphViewButton, "graph"], [tutorPathViewButton, "path"], [tutorDsuViewButton, "dsu"]].forEach(([button, option]) => {
+  tutorDpView.hidden = view !== "dp";
+  [[tutorMemoryViewButton, "memory"], [tutorTreeViewButton, "tree"], [tutorGraphViewButton, "graph"], [tutorPathViewButton, "path"], [tutorDsuViewButton, "dsu"], [tutorDpViewButton, "dp"]].forEach(([button, option]) => {
     button.classList.toggle("active", view === option);
     button.setAttribute("aria-selected", String(view === option));
   });
@@ -3391,6 +3596,8 @@ function showTutorStep(index) {
     renderTutorPath(step.frames, step.heap, labels);
   } else if (tab.tutorView === "dsu") {
     renderTutorDsu(step.frames, step.heap);
+  } else if (tab.tutorView === "dp") {
+    renderTutorDp(step.frames, step.heap);
   } else {
     renderTutorMemory(step.frames, step.heap, labels, names);
   }
@@ -3602,6 +3809,7 @@ tutorTreeViewButton.addEventListener("click", () => setTutorView("tree"));
 tutorGraphViewButton.addEventListener("click", () => setTutorView("graph"));
 tutorPathViewButton.addEventListener("click", () => setTutorView("path"));
 tutorDsuViewButton.addEventListener("click", () => setTutorView("dsu"));
+tutorDpViewButton.addEventListener("click", () => setTutorView("dp"));
 
 function typingInVisibleField(target) {
   if (!target || target === document.body || target === document.documentElement) return false;

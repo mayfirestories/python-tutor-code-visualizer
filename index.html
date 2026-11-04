@@ -94,6 +94,7 @@
                 <button id="tutorGraphViewButton" class="view-toggle-button" type="button" role="tab" aria-selected="false">Graph</button>
                 <button id="tutorPathViewButton" class="view-toggle-button" type="button" role="tab" aria-selected="false">Path</button>
                 <button id="tutorDsuViewButton" class="view-toggle-button" type="button" role="tab" aria-selected="false" title="Disjoint set union">DSU</button>
+                <button id="tutorDpViewButton" class="view-toggle-button" type="button" role="tab" aria-selected="false" title="Dynamic programming coin table">DP</button>
               </div>
 
               <section id="tutorGraphView" class="tutor-tree-view" hidden aria-label="Graph visualization">
@@ -142,6 +143,15 @@
                   </aside>
                 </div>
                 <div id="tutorDsuDetail" class="dsu-detail"></div>
+              </section>
+
+              <section id="tutorDpView" class="tutor-tree-view" hidden aria-label="Dynamic programming">
+                <div id="tutorDpLegend" class="tree-legend"></div>
+                <div class="dp-stage">
+                  <div id="tutorDpTables" class="dp-tables"></div>
+                  <aside id="tutorDpChoice" class="dp-choice" aria-label="Coin trials for the current amount"></aside>
+                </div>
+                <div id="tutorDpRebuild" class="dp-rebuild"></div>
               </section>
 
               <section id="tutorTreeView" class="tutor-tree-view" hidden aria-label="Tree visualization">
