@@ -9,11 +9,7 @@
   <body>
     <main>
       <header>
-        <div>
-          <p class="eyebrow">Interactive Execution &amp; Memory Stepper</p>
-          <h1>Python Code Visualizer</h1>
-        </div>
-        <button id="resetButton" type="button" title="Reset code in the active tab">Reset Tab</button>
+        <h1>Python Code Visualizer</h1>
       </header>
 
       <section class="workspace">
@@ -26,6 +22,7 @@
               <!-- Dynamically populated tab buttons: Tab 1, Tab 2, ... -->
             </div>
             <button id="addTabButton" class="add-tab-button" type="button" title="Open new tab (file)" aria-label="Open new tab">+</button>
+            <button id="resetButton" class="small-button reset-tab-button" type="button" title="Reset code in the active tab">Reset Tab</button>
           </div>
 
           <section id="notesEditor" class="editor-view active" role="tabpanel" aria-label="Python code editor">
