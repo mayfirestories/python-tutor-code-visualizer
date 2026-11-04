@@ -66,6 +66,12 @@ const tutorDpTables = document.querySelector("#tutorDpTables");
 const tutorDpChoice = document.querySelector("#tutorDpChoice");
 const tutorDpRebuild = document.querySelector("#tutorDpRebuild");
 const tutorDpViewButton = document.querySelector("#tutorDpViewButton");
+const tutorBacktrackView = document.querySelector("#tutorBacktrackView");
+const tutorBacktrackLegend = document.querySelector("#tutorBacktrackLegend");
+const tutorBacktrackNumbers = document.querySelector("#tutorBacktrackNumbers");
+const tutorBacktrackPath = document.querySelector("#tutorBacktrackPath");
+const tutorBacktrackStack = document.querySelector("#tutorBacktrackStack");
+const tutorBacktrackViewButton = document.querySelector("#tutorBacktrackViewButton");
 const tutorVarFocus = document.querySelector("#tutorVarFocus");
 const tutorVarFocusKicker = document.querySelector("#tutorVarFocusKicker");
 const tutorVarFocusTitle = document.querySelector("#tutorVarFocusTitle");
@@ -3285,7 +3291,200 @@ function renderTutorDp(frames, heap) {
   renderDpRebuild(state);
 }
 
-const TUTOR_VIEWS = ["memory", "tree", "graph", "path", "dsu", "dp"];
+// ---------------------------------------------------------------------------
+// Backtracking
+// One shared path list. Choose appends a candidate, explore recurses, and
+// undo pops so the next candidate can reuse the same list.
+// ---------------------------------------------------------------------------
+
+function frameInt(frame, names) {
+  const wanted = new Set(names);
+  let found = null;
+  Object.entries(frame?.locals || {}).forEach(([name, encoded]) => {
+    if (!wanted.has(name)) return;
+    const value = readScalarInt(encoded);
+    if (value == null) return;
+    found = value;
+  });
+  return found;
+}
+
+function frameNamedList(frame, heap, pattern, allowEmpty = false) {
+  let found = null;
+  Object.entries(frame?.locals || {}).forEach(([name, encoded]) => {
+    if (!pattern.test(name) || encoded?.kind !== "ref") return;
+    const values = readDpList(heap?.[encoded.id]);
+    if (!values || (!allowEmpty && !values.length)) return;
+    found = { name, values };
+  });
+  return found;
+}
+
+function backtrackPhase(lineText) {
+  const line = String(lineText || "").trim();
+  if (/\.append\(/.test(line)) return "choose";
+  if (/\.pop\(/.test(line)) return "undo";
+  if (/backtrack\(/.test(line) && !/^def\b/.test(line)) return "explore";
+  if (/==\s*target|\btarget\s*==/.test(line)) return "check";
+  if (/>\s*target/.test(line)) return "prune";
+  if (/^for\s+\w+\s+in\s+range\(/.test(line)) return "loop";
+  return "search";
+}
+
+function collectBacktrackCalls(frames, heap) {
+  return (frames || []).map((frame) => {
+    const path = frameNamedList(frame, heap, /^(path|combo|subset|current)$/i, true);
+    if (!path) return null;
+    const named = /backtrack|dfs|search/i.test(frame.name);
+    const start = frameInt(frame, ["start"]);
+    const total = frameInt(frame, ["total", "curr", "running"]);
+    if (!named && start == null && total == null) return null;
+    return {
+      name: frame.name,
+      path,
+      start,
+      total,
+      i: frameInt(frame, ["i", "index"]),
+      num: frameInt(frame, ["num", "choice"])
+    };
+  }).filter(Boolean);
+}
+
+function pathIndexes(numbers, path) {
+  const used = [];
+  let from = 0;
+  path.forEach((value) => {
+    for (let index = from; index < numbers.length; index += 1) {
+      if (numbers[index] === value) {
+        used.push(index);
+        from = index + 1;
+        return;
+      }
+    }
+  });
+  return used;
+}
+
+function renderBacktrackNumbers(numbers, path, call, phase) {
+  const used = new Set(pathIndexes(numbers.values, path.values));
+  const lastUsed = used.size ? Math.max(...used) : null;
+  const cells = numbers.values.map((value, index) => {
+    const onPath = used.has(index);
+    const choosing = call?.i != null && index === call.i;
+    const passed = call?.start != null && index < call.start && !onPath;
+    const removing = phase === "undo" && index === lastUsed;
+    const classes = [
+      "dp-cell",
+      onPath ? "onpath" : "",
+      choosing ? "here" : "",
+      passed ? "passed" : "",
+      removing ? "undo" : ""
+    ].filter(Boolean).join(" ");
+    return `<div class="${classes}"><span>${value}</span></div>`;
+  }).join("");
+  const indexes = numbers.values.map((_, index) => `<div class="dp-index">${index}</div>`).join("");
+  return `
+    <div class="dp-grid" style="--n:${numbers.values.length}">
+      <div class="dp-corner"></div>
+      ${indexes}
+      <div class="dp-row-label">${escapeHtml(numbers.name)}</div>
+      ${cells}
+    </div>`;
+}
+
+function renderTutorBacktrack(frames, heap, lineText, stdout) {
+  const calls = collectBacktrackCalls(frames, heap);
+  const current = calls.at(-1) || null;
+  const path = current?.path || findInnermostList(frames, heap, /^(path|combo|subset|current)$/i, true);
+  if (!path) {
+    tutorBacktrackLegend.innerHTML = `<p class="dsu-note">No path in memory at this step. The Backtrack tab reads a list named <code>path</code>, the candidates in <code>numbers</code>, and <code>start</code>, <code>total</code>, and <code>target</code>.</p>`;
+    tutorBacktrackNumbers.innerHTML = `<p class="tutor-empty">Step into <code>backtrack</code>. The same path list is appended, explored, then popped.</p>`;
+    tutorBacktrackPath.innerHTML = "";
+    tutorBacktrackStack.innerHTML = "";
+    return;
+  }
+
+  const numbers = findInnermostList(frames, heap, /^(numbers|nums|candidates)$/i);
+  const target = findInnermostInt(frames, ["target", "TARGET"]);
+  const phase = backtrackPhase(lineText);
+  const total = current?.total ?? null;
+  const phaseLabels = [
+    ["choose", "Choose"],
+    ["explore", "Explore"],
+    ["undo", "Undo"]
+  ];
+  const activePhase = ["choose", "explore", "undo"].includes(phase) ? phase : "";
+  let banner = "The calls share one path. Append adds a number, the recursive call keeps it, and pop takes it back.";
+  if (total != null && target != null && total === target) {
+    banner = `Path adds up to ${target}. This call prints it, then returns.`;
+  } else if (total != null && target != null && total > target) {
+    banner = `Path adds up to ${total}, past ${target}. This call returns without trying more numbers.`;
+  } else if (phase === "choose" && current?.num != null) {
+    banner = `Choose ${current.num}: it is about to be appended.`;
+  } else if (phase === "explore") {
+    banner = "Explore: the recursive call keeps the number just appended and starts at the next index.";
+  } else if (phase === "undo") {
+    const last = path.values.at(-1);
+    banner = last == null ? "Undo: pop the last number." : `Undo: pop ${last} so the next candidate can use this path.`;
+  } else if (total != null && target != null) {
+    banner = `Path sum is ${total}. Target is ${target}.`;
+  }
+
+  tutorBacktrackLegend.innerHTML = `
+    <div class="tree-legend-row">
+      <span class="tree-chip active"><strong>${escapeHtml(path.name)}</strong></span>
+      <span class="tree-key"><span class="tree-swatch active"></span>Candidate at i</span>
+      <span class="tree-key"><span class="tree-swatch path"></span>On the path</span>
+      <span class="tree-key"><span class="tree-swatch"></span>Before start</span>
+    </div>
+    <div class="bt-phase">
+      ${phaseLabels.map(([key, label]) => `<span class="${key === activePhase ? "active" : ""}">${label}</span>`).join("")}
+    </div>
+    <p class="dsu-note">${escapeHtml(banner)}</p>`;
+
+  tutorBacktrackNumbers.innerHTML = numbers
+    ? renderBacktrackNumbers(numbers, path, current, phase)
+    : `<p class="tutor-empty">No candidate list named numbers is in memory.</p>`;
+
+  const chips = path.values.map((value, index) => {
+    const removing = phase === "undo" && index === path.values.length - 1;
+    return `<span class="dp-chip${removing ? " removing" : ""}">${value}</span>`;
+  }).join("");
+  const pending = phase === "choose" && current?.num != null
+    ? `<span class="dp-chip pending">+ ${current.num}</span>`
+    : "";
+  const sumLabel = total == null ? "" : target == null ? `sum ${total}` : `${total} / ${target}`;
+  tutorBacktrackPath.innerHTML = `
+    <div>
+      <div class="dsu-detail-label">${escapeHtml(path.name)}${sumLabel ? ` · ${escapeHtml(sumLabel)}` : ""}</div>
+      <div class="dp-chip-row">${chips || `<span class="queue-empty">empty</span>`}${pending}</div>
+    </div>`;
+
+  const stack = calls.map((call, depth) => {
+    const bits = [];
+    if (call.start != null) bits.push(`start ${call.start}`);
+    if (call.total != null) bits.push(`total ${call.total}`);
+    if (call.i != null) bits.push(`i ${call.i}`);
+    if (call.num != null) bits.push(`num ${call.num}`);
+    const currentCall = depth === calls.length - 1;
+    return `<div class="bt-call${currentCall ? " current" : ""}" style="margin-left:${depth * 12}px">${escapeHtml(bits.join(" · ") || call.name)}</div>`;
+  }).join("");
+  const printed = [...String(stdout || "").matchAll(/\[[^\]]*\]/g)].map((match) => match[0]);
+  const kept = printed.length
+    ? printed.map((item) => `<span class="dp-chip">${escapeHtml(item)}</span>`).join("")
+    : `<span class="queue-empty">none yet</span>`;
+  tutorBacktrackStack.innerHTML = `
+    <div>
+      <div class="dsu-detail-label">Calls</div>
+      <div class="bt-stack" style="padding:0;border:0;background:transparent">${stack || `<p class="tutor-empty">No backtrack call is on the stack.</p>`}</div>
+    </div>
+    <div>
+      <div class="dsu-detail-label">Printed solutions</div>
+      <div class="dp-chip-row">${kept}</div>
+    </div>`;
+}
+
+const TUTOR_VIEWS = ["memory", "tree", "graph", "path", "dsu", "dp", "backtrack"];
 
 function applyTutorView(tab) {
   const view = TUTOR_VIEWS.includes(tab?.tutorView) ? tab.tutorView : "memory";
@@ -3295,7 +3494,8 @@ function applyTutorView(tab) {
   tutorPathView.hidden = view !== "path";
   tutorDsuView.hidden = view !== "dsu";
   tutorDpView.hidden = view !== "dp";
-  [[tutorMemoryViewButton, "memory"], [tutorTreeViewButton, "tree"], [tutorGraphViewButton, "graph"], [tutorPathViewButton, "path"], [tutorDsuViewButton, "dsu"], [tutorDpViewButton, "dp"]].forEach(([button, option]) => {
+  tutorBacktrackView.hidden = view !== "backtrack";
+  [[tutorMemoryViewButton, "memory"], [tutorTreeViewButton, "tree"], [tutorGraphViewButton, "graph"], [tutorPathViewButton, "path"], [tutorDsuViewButton, "dsu"], [tutorDpViewButton, "dp"], [tutorBacktrackViewButton, "backtrack"]].forEach(([button, option]) => {
     button.classList.toggle("active", view === option);
     button.setAttribute("aria-selected", String(view === option));
   });
@@ -3598,6 +3798,9 @@ function showTutorStep(index) {
     renderTutorDsu(step.frames, step.heap);
   } else if (tab.tutorView === "dp") {
     renderTutorDp(step.frames, step.heap);
+  } else if (tab.tutorView === "backtrack") {
+    const lineText = step.line ? (tab.code || "").split("\n")[step.line - 1] : "";
+    renderTutorBacktrack(step.frames, step.heap, lineText, step.stdout);
   } else {
     renderTutorMemory(step.frames, step.heap, labels, names);
   }
@@ -3810,6 +4013,7 @@ tutorGraphViewButton.addEventListener("click", () => setTutorView("graph"));
 tutorPathViewButton.addEventListener("click", () => setTutorView("path"));
 tutorDsuViewButton.addEventListener("click", () => setTutorView("dsu"));
 tutorDpViewButton.addEventListener("click", () => setTutorView("dp"));
+tutorBacktrackViewButton.addEventListener("click", () => setTutorView("backtrack"));
 
 function typingInVisibleField(target) {
   if (!target || target === document.body || target === document.documentElement) return false;

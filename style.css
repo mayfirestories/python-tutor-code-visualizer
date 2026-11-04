@@ -505,6 +505,17 @@ button.heap-row.heap-slot { display: grid; }
 .dp-rebuild { display: grid; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid #303443; background: #161821; }
 .dp-chip-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .dp-chip { padding: 3px 8px; border: 1px solid #ff9e64; border-radius: 999px; background: #ff9e6426; color: #ffd0b0; font: 700 .78rem ui-monospace, monospace; }
+.dp-chip.pending { border-style: dashed; border-color: #f8cc5c; background: transparent; color: #f8cc5c; }
+.dp-chip.removing { border-color: #ff7ab2; background: #ff7ab226; color: #ffd0e4; }
+.dp-cell.passed { color: #535766; }
+.dp-cell.onpath { border-color: #ff9e64; }
+.dp-cell.undo { border-color: #ff7ab2; background: #ff7ab218; }
+.bt-phase { display: flex; flex-wrap: wrap; gap: 6px; }
+.bt-phase span { padding: 3px 8px; border: 1px solid #454a5e; border-radius: 999px; color: #858a9d; font: 700 .72rem ui-monospace, monospace; }
+.bt-phase span.active { border-color: #f8cc5c; color: #f8cc5c; }
+.bt-stack { display: grid; gap: 6px; padding: 10px 12px 12px; border-top: 1px solid #303443; background: #161821; }
+.bt-call { padding: 6px 8px; border: 1px solid #454a5e; border-radius: 8px; background: #1a1d28; color: #d8dbea; font: 700 .74rem ui-monospace, monospace; }
+.bt-call.current { border-color: #f8cc5c; box-shadow: inset 3px 0 #f8cc5c; }
 
 @media (max-width: 700px) {
   .workspace { grid-template-columns: 1fr; }

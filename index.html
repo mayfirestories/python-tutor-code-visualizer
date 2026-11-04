@@ -95,6 +95,7 @@
                 <button id="tutorPathViewButton" class="view-toggle-button" type="button" role="tab" aria-selected="false">Path</button>
                 <button id="tutorDsuViewButton" class="view-toggle-button" type="button" role="tab" aria-selected="false" title="Disjoint set union">DSU</button>
                 <button id="tutorDpViewButton" class="view-toggle-button" type="button" role="tab" aria-selected="false" title="Dynamic programming coin table">DP</button>
+                <button id="tutorBacktrackViewButton" class="view-toggle-button" type="button" role="tab" aria-selected="false" title="Backtracking choose, explore, undo">Backtrack</button>
               </div>
 
               <section id="tutorGraphView" class="tutor-tree-view" hidden aria-label="Graph visualization">
@@ -152,6 +153,13 @@
                   <aside id="tutorDpChoice" class="dp-choice" aria-label="Coin trials for the current amount"></aside>
                 </div>
                 <div id="tutorDpRebuild" class="dp-rebuild"></div>
+              </section>
+
+              <section id="tutorBacktrackView" class="tutor-tree-view" hidden aria-label="Backtracking">
+                <div id="tutorBacktrackLegend" class="tree-legend"></div>
+                <div id="tutorBacktrackNumbers" class="dp-tables"></div>
+                <div id="tutorBacktrackPath" class="dp-rebuild"></div>
+                <div id="tutorBacktrackStack" class="bt-stack"></div>
               </section>
 
               <section id="tutorTreeView" class="tutor-tree-view" hidden aria-label="Tree visualization">
